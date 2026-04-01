@@ -33,7 +33,7 @@ import requests
 
 BASE_URL = os.environ.get(
     "HOMERUN_BASE_URL",
-    "https://YOURCOMPANY.cloud.homerunpresales.com/api/v1",
+    "https://datadog.cloud.homerunpresales.com/api/v1",
 )
 
 
