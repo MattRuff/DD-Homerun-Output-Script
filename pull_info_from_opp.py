@@ -57,8 +57,10 @@ def _check_jwt_expiry(cookie_str: str, source: str) -> None:
                     if hours_ago > 1:
                         print(
                             f"Error: JWT token from {source} expired {hours_ago:.0f}h ago.\n"
-                            f"  Log in to Homerun in Chrome and re-run (rookiepy will grab fresh cookies),\n"
-                            f"  or update your cookies file / env var.",
+                            f"  Fix: open Homerun in Chrome, do a hard refresh (Cmd+Shift+R),\n"
+                            f"  wait a few seconds for the page to fully load, then re-run.\n"
+                            f"  (Homerun issues short-lived tokens; the page must fully load\n"
+                            f"  so the refresh-token exchange writes a new cookie to Chrome.)",
                             file=sys.stderr,
                         )
                         sys.exit(1)
