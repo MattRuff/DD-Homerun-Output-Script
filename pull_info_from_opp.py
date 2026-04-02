@@ -88,64 +88,48 @@ def _get_cookies(args) -> str:
         _check_jwt_expiry(cookie_str, "HOMERUN_COOKIES env var")
         return cookie_str
 
-    default_cookie_path = os.path.join(
-        os.path.dirname(os.path.abspath(__file__)), "cookies.txt"
-    )
-
-    # Try rookiepy first — gets fresh cookies from local Chrome
-    rookiepy_failed = False
     try:
         import rookiepy
-        cookies = rookiepy.chrome(["homerunpresales.com"])
-        if not cookies:
-            print("No Homerun cookies in Chrome. Log in first.", file=sys.stderr)
-            sys.exit(1)
-
-        if not any(c["name"] == "jwttoken" for c in cookies):
-            print(
-                "Error: jwttoken not found in Chrome cookies.\n"
-                "  Log in to Homerun in Chrome and try again.",
-                file=sys.stderr,
-            )
-            sys.exit(1)
-
-        seen = {}
-        for c in cookies:
-            seen[c["name"]] = c["value"]
-        cookie_str = "; ".join(f"{k}={v}" for k, v in seen.items())
-        _check_jwt_expiry(cookie_str, "Chrome cookies")
-
-        try:
-            with open(default_cookie_path, "w", encoding="utf-8") as f:
-                f.write(cookie_str)
-            print(f"Cookies saved to {default_cookie_path}", file=sys.stderr)
-        except OSError as e:
-            print(f"Warning: could not save cookies to {default_cookie_path}: {e}", file=sys.stderr)
-
-        return cookie_str
     except ImportError:
-        rookiepy_failed = True
+        print(
+            "Error: no cookies provided and rookiepy is not installed.\n"
+            "  Install rookiepy (pip install rookiepy) and log in to Homerun in Chrome,\n"
+            "  or pass cookies explicitly via --cookies, -f, or HOMERUN_COOKIES env var.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    try:
+        cookies = rookiepy.chrome(["homerunpresales.com"])
     except RuntimeError:
-        rookiepy_failed = True
+        print(
+            "Error: could not read Chrome cookies (no browser cookie store found).\n"
+            "  This is expected inside Docker or headless environments.\n"
+            "  Supply cookies with one of:\n"
+            "    docker run -e HOMERUN_COOKIES='jwttoken=...; jrtoken=...' IMAGE --all\n"
+            "    docker run IMAGE --cookies 'jwttoken=...; jrtoken=...' --all",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
-    # Fallback: auto-detect cookies.txt next to the script (Docker / headless)
-    if os.path.isfile(default_cookie_path):
-        with open(default_cookie_path, encoding="utf-8") as f:
-            cookie_str = f.read().strip()
-        if cookie_str:
-            _check_jwt_expiry(cookie_str, f"file {default_cookie_path}")
-            return cookie_str
+    if not cookies:
+        print("No Homerun cookies in Chrome. Log in first.", file=sys.stderr)
+        sys.exit(1)
 
-    print(
-        "Error: no cookies available.\n"
-        "  On a desktop: log in to Homerun in Chrome, install rookiepy, and re-run.\n"
-        "  In Docker / headless, supply cookies with one of:\n"
-        "    docker run -e HOMERUN_COOKIES='jwttoken=...; jrtoken=...' IMAGE --all\n"
-        "    docker run -v /path/to/cookies.txt:/app/cookies.txt IMAGE --all\n"
-        "    docker run IMAGE --cookies 'jwttoken=...; jrtoken=...' --all",
-        file=sys.stderr,
-    )
-    sys.exit(1)
+    if not any(c["name"] == "jwttoken" for c in cookies):
+        print(
+            "Error: jwttoken not found in Chrome cookies.\n"
+            "  Log in to Homerun in Chrome and try again.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    seen = {}
+    for c in cookies:
+        seen[c["name"]] = c["value"]
+    cookie_str = "; ".join(f"{k}={v}" for k, v in seen.items())
+    _check_jwt_expiry(cookie_str, "Chrome cookies")
+    return cookie_str
 
 
 def _headers(cookies: str) -> dict:
