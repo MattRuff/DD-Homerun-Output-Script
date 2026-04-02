@@ -109,6 +109,15 @@ def _get_cookies(args) -> str:
         seen[c["name"]] = c["value"]
     cookie_str = "; ".join(f"{k}={v}" for k, v in seen.items())
     _check_jwt_expiry(cookie_str, "Chrome cookies")
+
+    cookie_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cookies.txt")
+    try:
+        with open(cookie_path, "w", encoding="utf-8") as f:
+            f.write(cookie_str)
+        print(f"Cookies saved to {cookie_path}", file=sys.stderr)
+    except OSError as e:
+        print(f"Warning: could not save cookies to {cookie_path}: {e}", file=sys.stderr)
+
     return cookie_str
 
 
