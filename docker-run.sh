@@ -12,7 +12,17 @@ set -euo pipefail
 IMAGE="${DOCKER_IMAGE:-matthewruyffelaert667/homerun-ddog-scripts}"
 TAG="${DOCKER_TAG:-latest}"
 
-PYTHON="${HOMERUN_PYTHON:-python3}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+if [ -n "${HOMERUN_PYTHON:-}" ]; then
+  PYTHON="$HOMERUN_PYTHON"
+elif [ -x "$SCRIPT_DIR/../.venv/bin/python" ]; then
+  PYTHON="$SCRIPT_DIR/../.venv/bin/python"
+elif [ -x "$SCRIPT_DIR/.venv/bin/python" ]; then
+  PYTHON="$SCRIPT_DIR/.venv/bin/python"
+else
+  PYTHON="python3"
+fi
 
 COOKIES=$("$PYTHON" -c "
 import rookiepy, sys
