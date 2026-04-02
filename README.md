@@ -88,6 +88,34 @@ Each exported opportunity contains:
 - **`KNOWN_USERS`**: Optional cache of display-name → UUID mappings for `--team` lookups. Avoids an API call for known names. Falls back to the API for any name not listed.
 - **`SALESFORCE_STAGES_1_5`**: Stage filter values for the `--team` / `stage_filter="active"` mode. Adjust if your Homerun instance uses different stage names.
 
+## Docker
+
+A Docker image is available at `matthewruyffelaert667/homerun-ddog-scripts`.
+
+The easiest way to run it is with the **`docker-run.sh`** wrapper, which automatically extracts fresh cookies from your local Chrome and passes them to the container:
+
+```bash
+./docker-run.sh --all
+./docker-run.sh --list
+./docker-run.sh "Acme Corp - New Business - Annual - 2026"
+```
+
+Requires `rookiepy` installed on the host (`pip install rookiepy`). Override the Python binary with `HOMERUN_PYTHON` if your rookiepy lives in a venv:
+
+```bash
+HOMERUN_PYTHON=.venv/bin/python ./docker-run.sh --all
+```
+
+**Manual cookie passing** (no rookiepy on host):
+
+```bash
+docker run --rm -e HOMERUN_COOKIES='jwttoken=...; jrtoken=...' \
+  matthewruyffelaert667/homerun-ddog-scripts --all
+
+docker run --rm matthewruyffelaert667/homerun-ddog-scripts \
+  --cookies 'jwttoken=...; jrtoken=...' --all
+```
+
 ## License
 
 MIT License. See [LICENSE](LICENSE).
