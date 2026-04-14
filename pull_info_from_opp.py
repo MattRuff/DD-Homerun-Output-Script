@@ -103,13 +103,43 @@ def _get_cookies(args) -> str:
 
     try:
         cookies = rookiepy.chrome(["homerunpresales.com"])
-    except RuntimeError:
+    except RuntimeError as e:
+        err = str(e).lower()
+        if "can't find cookies" in err or "no such file" in err:
+            if sys.platform == "darwin":
+                print(
+                    "Error: could not read Chrome cookie database.\n"
+                    "  On macOS this usually means your terminal app lacks Full Disk Access.\n"
+                    "  Fix: System Settings > Privacy & Security > Full Disk Access\n"
+                    "        -> toggle ON your terminal (Terminal, iTerm2, Cursor, VS Code, etc.)\n"
+                    "        -> restart the terminal and try again.\n"
+                    "  If running in Docker, pass cookies via -e HOMERUN_COOKIES or --cookies.",
+                    file=sys.stderr,
+                )
+            else:
+                print(
+                    "Error: could not read Chrome cookies (cookie store not found).\n"
+                    "  In Docker / headless, supply cookies with one of:\n"
+                    "    docker run -e HOMERUN_COOKIES='jwttoken=...; jrtoken=...' IMAGE --all\n"
+                    "    docker run IMAGE --cookies 'jwttoken=...; jrtoken=...' --all",
+                    file=sys.stderr,
+                )
+        else:
+            print(
+                f"Error: rookiepy could not read Chrome cookies: {e}\n"
+                "  On macOS, check:\n"
+                "    1. Full Disk Access granted to your terminal app\n"
+                "    2. Keychain prompt: click 'Always Allow' for 'Chrome Safe Storage'\n"
+                "  Or pass cookies via --cookies, -f, or HOMERUN_COOKIES env var.",
+                file=sys.stderr,
+            )
+        sys.exit(1)
+    except OSError as e:
         print(
-            "Error: could not read Chrome cookies (no browser cookie store found).\n"
-            "  This is expected inside Docker or headless environments.\n"
-            "  Supply cookies with one of:\n"
-            "    docker run -e HOMERUN_COOKIES='jwttoken=...; jrtoken=...' IMAGE --all\n"
-            "    docker run IMAGE --cookies 'jwttoken=...; jrtoken=...' --all",
+            f"Error: OS permission error reading Chrome cookies: {e}\n"
+            "  On macOS: grant Full Disk Access to your terminal app:\n"
+            "    System Settings > Privacy & Security > Full Disk Access\n"
+            "  Then restart the terminal and try again.",
             file=sys.stderr,
         )
         sys.exit(1)

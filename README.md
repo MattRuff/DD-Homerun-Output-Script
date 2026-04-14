@@ -53,6 +53,51 @@ Auth is **automatic** when using `docker-run.sh` or running locally with [rookie
 | Cookie file | `-f cookies.txt` |
 | CLI argument | `-c "name=value; ..."` |
 
+### macOS Permissions (first-time setup)
+
+rookiepy reads Chrome's encrypted cookie database. On macOS this requires three things to be in place:
+
+**1. Full Disk Access for your terminal app**
+
+macOS restricts access to `~/Library/Application Support/Google/Chrome/`. Your terminal needs Full Disk Access:
+
+> **System Settings > Privacy & Security > Full Disk Access** — toggle on your terminal app (Terminal, iTerm2, Cursor, VS Code, etc.)
+
+You'll need to restart the terminal after granting this.
+
+**2. Keychain access for "Chrome Safe Storage"**
+
+Chrome encrypts cookies with a key stored in your macOS Keychain. The first time rookiepy runs, macOS will show a prompt:
+
+> *"python3 wants to use your confidential information stored in 'Chrome Safe Storage' in your keychain."*
+
+Click **"Always Allow"** (not just "Allow") so it doesn't ask again.
+
+If you accidentally clicked "Deny", you can fix it:
+
+> Open **Keychain Access** app > search for `Chrome Safe Storage` > right-click > **Get Info** > **Access Control** tab > add your Python binary or set to "Allow all applications".
+
+**3. Python <= 3.12**
+
+rookiepy uses a native Rust extension that currently supports Python up to 3.12. If your system Python is 3.13+, create a venv with 3.12:
+
+```bash
+brew install python@3.12   # if not already installed
+python3.12 -m venv .venv
+.venv/bin/pip install rookiepy
+```
+
+### Troubleshooting
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| `RuntimeError: can't find cookies file` | Chrome cookie DB not accessible | Grant **Full Disk Access** to your terminal app |
+| `OSError: [Errno 1] Operation not permitted` | Same as above | Grant **Full Disk Access** and restart terminal |
+| Keychain prompt keeps appearing | Clicked "Allow" instead of "Always Allow" | Open Keychain Access, find "Chrome Safe Storage", update Access Control |
+| `rookiepy` won't install / build error | Python too new | Use Python 3.12: `python3.12 -m venv .venv` |
+| `jwttoken not found in Chrome cookies` | Not logged in to Homerun | Open Homerun in Chrome, log in, hard refresh (`Cmd+Shift+R`) |
+| `JWT token expired Xh ago` | Stale session | Hard refresh Homerun in Chrome, wait for page to fully load |
+
 ## Usage
 
 All examples below work with both `docker-run.sh` and direct Python. Replace `./docker-run.sh` with `python pull_info_from_opp.py` if running locally.
