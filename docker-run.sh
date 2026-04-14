@@ -68,13 +68,53 @@ fi
 # --- Extract cookies from Chrome ---
 
 COOKIES=$("$PYTHON" -c "
-import rookiepy, sys
-cookies = rookiepy.chrome(['homerunpresales.com'])
+import sys
+try:
+    import rookiepy
+except ImportError:
+    print('Error: rookiepy not importable even after install attempt.', file=sys.stderr)
+    sys.exit(1)
+try:
+    cookies = rookiepy.chrome(['homerunpresales.com'])
+except RuntimeError as e:
+    err = str(e).lower()
+    if 'can\'t find cookies' in err or 'no such file' in err:
+        print(
+            'Error: could not read Chrome cookie database.\n'
+            '  On macOS this usually means your terminal app lacks Full Disk Access.\n'
+            '  Fix: System Settings > Privacy & Security > Full Disk Access\n'
+            '        -> toggle ON your terminal (Terminal, iTerm2, Cursor, VS Code, etc.)\n'
+            '        -> restart the terminal and try again.',
+            file=sys.stderr,
+        )
+    else:
+        print(
+            f'Error: rookiepy could not read Chrome cookies: {e}\n'
+            '  On macOS, check:\n'
+            '    1. Full Disk Access granted to your terminal app\n'
+            '    2. Keychain prompt: click \"Always Allow\" for \"Chrome Safe Storage\"',
+            file=sys.stderr,
+        )
+    sys.exit(1)
+except OSError as e:
+    print(
+        f'Error: OS permission error reading Chrome cookies: {e}\n'
+        '  On macOS: grant Full Disk Access to your terminal app:\n'
+        '    System Settings > Privacy & Security > Full Disk Access\n'
+        '  Then restart the terminal and try again.',
+        file=sys.stderr,
+    )
+    sys.exit(1)
 if not cookies:
-    print('No Homerun cookies in Chrome. Log in first.', file=sys.stderr)
+    print('Error: no Homerun cookies found in Chrome. Log in to Homerun first.', file=sys.stderr)
     sys.exit(1)
 if not any(c['name'] == 'jwttoken' for c in cookies):
-    print('jwttoken not found — log in to Homerun in Chrome and hard-refresh (Cmd+Shift+R).', file=sys.stderr)
+    print(
+        'Error: jwttoken not found in Chrome cookies.\n'
+        '  Log in to Homerun in Chrome, do a hard refresh (Cmd+Shift+R),\n'
+        '  wait for the page to fully load, then re-run.',
+        file=sys.stderr,
+    )
     sys.exit(1)
 seen = {}
 for c in cookies:
