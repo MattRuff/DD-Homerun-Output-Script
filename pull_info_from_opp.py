@@ -4,7 +4,8 @@ from __future__ import annotations
 Homerun Presales data exporter.
 
 Pulls evaluation data (general info, meeting minutes, transcripts) from the
-Homerun API and exports it as JSON or plain text for LLM post-processing.
+Homerun API and exports it as Markdown (default, for AI agents), JSON, plain
+text, Word, or Google Docs.
 
 Auth is automatic — reads cookies from your Chrome session via rookiepy.
 Just be logged in to Homerun in Chrome.
@@ -846,6 +847,154 @@ def format_all_opportunities_text(opportunities: list[dict]) -> str:
     return "\n".join(parts)
 
 
+def _md_heading_fragment(s: str) -> str:
+    """Strip leading # so a title cannot break Markdown heading syntax."""
+    t = " ".join((s or "").split())
+    while t.startswith("#"):
+        t = t[1:].lstrip()
+    return t or "Unknown"
+
+
+def format_opportunity_markdown(
+    opp: dict,
+    *,
+    index: int | None = None,
+    total: int | None = None,
+) -> str:
+    """Format one opportunity as Markdown tuned for downstream AI agents (clear sections, minimal nesting)."""
+    title = _md_heading_fragment(opp.get("Opportunity_Name", "Unknown"))
+    if index is not None and total is not None:
+        head = f"## Opportunity {index} of {total}: {title}"
+    else:
+        head = f"## {title}"
+
+    lines: list[str] = [head, ""]
+
+    lines += [
+        "### Snapshot",
+        "",
+        f"- **Opportunity_ID**: `{opp.get('Opportunity_ID', '')}`",
+        f"- **Customer**: {opp.get('Customer', '')}",
+    ]
+    if opp.get("Type"):
+        lines.append(f"- **Type**: {opp['Type']}")
+    if opp.get("Term"):
+        lines.append(f"- **Term**: {opp['Term']}")
+    if opp.get("Year"):
+        lines.append(f"- **Year**: {opp['Year']}")
+    lines += [
+        f"- **Stage**: {opp.get('Stage', '')}",
+        f"- **Deal_Size_USD**: {opp.get('Deal_Size', 0):,.2f}",
+        f"- **SE**: {opp.get('SE', '')}",
+        f"- **SR**: {opp.get('SR', '')}",
+        f"- **Created_Date**: {opp.get('Created_Date', '')}",
+        f"- **Last_Updated**: {opp.get('Last_Updated', '')}",
+        f"- **Sentiment**: {opp.get('Sentiment', '')}",
+        f"- **Tech_Win**: {opp.get('Tech_Win', '')}",
+        f"- **Deal_Win**: {opp.get('Deal_Win', '')}",
+        "",
+    ]
+
+    status_entries = opp.get("Current_Status", [])
+    if status_entries:
+        lines += ["### Current_Status", ""]
+        for s in status_entries:
+            d, author = s.get("date", ""), s.get("author", "")
+            note = s.get("note", "")
+            lines.append(f"- **{d}** — **{author}**")
+            if note:
+                for para in note.split("\n"):
+                    p = para.strip()
+                    if p:
+                        lines.append(f"  - {p}")
+            lines.append("")
+
+    next_steps = opp.get("Next_Steps", {})
+    ns_keys = [
+        "AE_CSM_Next_Step",
+        "AE_CSM_Manager_Next_Steps",
+        "AE_CSM_Director_Next_Steps",
+        "SE_Next_Steps",
+        "SE_Leader_Next_Steps",
+    ]
+    ns_items = [(k, next_steps.get(k, "")) for k in ns_keys]
+    if any(v for _, v in ns_items):
+        lines += ["### Next_Steps", ""]
+        for key, value in ns_items:
+            if not value:
+                continue
+            lines.append(f"#### {key}")
+            lines.append("")
+            for ln in value.split("\n"):
+                ln = ln.strip()
+                if ln:
+                    lines.append(f"- {ln}")
+            lines.append("")
+
+    minutes = opp.get("Meeting_Minutes", [])
+    if minutes:
+        lines += [f"### Meeting_Minutes ({len(minutes)})", ""]
+        for m in minutes:
+            d, ttitle = m.get("date", ""), m.get("title", "")
+            lines.append(f"#### {d} — {ttitle}")
+            lines.append("")
+            summary = m.get("summary", "")
+            if summary:
+                for para in summary.split("\n"):
+                    p = para.strip()
+                    if p:
+                        lines.append(p)
+                        lines.append("")
+
+    transcripts = opp.get("Transcripts", [])
+    if transcripts:
+        total_segs = sum(len(m.get("segments", [])) for m in transcripts)
+        lines += [
+            f"### Transcripts ({len(transcripts)} meetings, {total_segs} segments)",
+            "",
+        ]
+        for meeting in transcripts:
+            lines.append(f"#### {meeting.get('meeting', '')}")
+            lines.append("")
+            for seg in meeting.get("segments", []):
+                speaker = seg.get("speaker", "")
+                text = seg.get("text", "")
+                lines.append(f"- **{speaker}**: {text}")
+            lines.append("")
+
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def format_export_markdown(opportunities: list[dict]) -> str:
+    """Envelope + all opportunities as one Markdown document for AI ingestion."""
+    env = build_output_envelope(opportunities)
+    parts: list[str] = [
+        "# Homerun presales export",
+        "",
+        "Structured for downstream AI agents: each opportunity is a major section; fields use explicit labels.",
+        "",
+        "## Export_metadata",
+        "",
+        f"- **primary_key**: `{env['primary_key']}`",
+        f"- **total_expected_opportunities**: {env['total_expected_opportunities']}",
+        "",
+        "---",
+        "",
+    ]
+    n = len(opportunities)
+    for i, opp in enumerate(opportunities, 1):
+        parts.append(format_opportunity_markdown(opp, index=i, total=n))
+        parts.append("---")
+        parts.append("")
+    while parts and parts[-1] == "":
+        parts.pop()
+    while parts and parts[-1] == "---":
+        parts.pop()
+    while parts and parts[-1] == "":
+        parts.pop()
+    return "\n".join(parts) + "\n"
+
+
 def _safe_filename(name: str, max_len: int = 60) -> str:
     return name.replace("/", "-").replace("\\", "-").replace(":", "-")[:max_len]
 
@@ -952,8 +1101,12 @@ def main():
                         help="Cookie string")
     parser.add_argument("-f", "--cookies-file", metavar="FILE",
                         help="Read cookies from file")
-    parser.add_argument("--type", choices=["json", "txt", "docx", "gdoc"], default="json",
-                        help="Output format (default: json). gdoc uploads native Google Docs via Drive API.")
+    parser.add_argument(
+        "--type",
+        choices=["md", "json", "txt", "docx", "gdoc"],
+        default="md",
+        help="Output format: md=Markdown for AI agents (default), json, txt, docx; gdoc=Google Doc via Drive API.",
+    )
     parser.add_argument("--credentials", default=None, metavar="FILE",
                         help="Path to Google OAuth credentials.json (for --type gdoc)")
     parser.add_argument("--debug", action="store_true",
@@ -1063,8 +1216,10 @@ def main():
             with open(all_path, "w", encoding="utf-8") as f:
                 if combined_ext == "txt":
                     f.write(format_all_opportunities_text(all_opps))
-                else:
+                elif combined_ext == "json":
                     json.dump(build_output_envelope(all_opps), f, indent=2, ensure_ascii=False)
+                else:
+                    f.write(format_export_markdown(all_opps))
             print(f"  Combined -> {all_path}")
 
         print(f"\nDone. {exported} exported, {skipped} skipped (no access).")
