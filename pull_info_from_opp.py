@@ -221,6 +221,101 @@ def _post(cookies: str, path: str, payload: dict) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Google Drive helpers (lazy imports — only used with --type gdoc)
+# ---------------------------------------------------------------------------
+
+_GDOC_MIME = "application/vnd.google-apps.document"
+_DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+_FOLDER_MIME = "application/vnd.google-apps.folder"
+_DRIVE_SCOPES = ["https://www.googleapis.com/auth/drive.file"]
+
+
+def _get_drive_service(creds_path: str | None = None):
+    """Authenticate with Google Drive and return a service object."""
+    from google.oauth2.credentials import Credentials
+    from google_auth_oauthlib.flow import InstalledAppFlow
+    from google.auth.transport.requests import Request as GRequest
+    from googleapiclient.discovery import build
+
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    if creds_path is None:
+        creds_path = os.path.join(script_dir, "credentials.json")
+    token_path = os.path.join(script_dir, "token.json")
+
+    creds = None
+    if os.path.exists(token_path):
+        creds = Credentials.from_authorized_user_file(token_path, _DRIVE_SCOPES)
+
+    if not creds or not creds.valid:
+        if creds and creds.expired and creds.refresh_token:
+            creds.refresh(GRequest())
+        else:
+            if not os.path.exists(creds_path):
+                print(
+                    f"Error: Google credentials file not found at {creds_path}\n"
+                    "  Download OAuth Desktop credentials from Google Cloud Console\n"
+                    "  and save as credentials.json next to the script.\n"
+                    "  See: https://console.cloud.google.com/apis/credentials",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            flow = InstalledAppFlow.from_client_secrets_file(creds_path, _DRIVE_SCOPES)
+            creds = flow.run_local_server(port=0)
+        with open(token_path, "w") as f:
+            f.write(creds.to_json())
+
+    return build("drive", "v3", credentials=creds)
+
+
+def _resolve_drive_folder(service, path: str, root: str = "root") -> str:
+    """Walk a slash-separated path in Google Drive, creating folders as needed. Returns folder ID."""
+    folder_id = root
+    for part in path.strip("/").split("/"):
+        if not part:
+            continue
+        q = (
+            f"name = '{part}' and '{folder_id}' in parents "
+            f"and mimeType = '{_FOLDER_MIME}' and trashed = false"
+        )
+        results = service.files().list(q=q, fields="files(id)", pageSize=1).execute()
+        files = results.get("files", [])
+        if files:
+            folder_id = files[0]["id"]
+        else:
+            meta = {"name": part, "mimeType": _FOLDER_MIME, "parents": [folder_id]}
+            folder = service.files().create(body=meta, fields="id").execute()
+            folder_id = folder["id"]
+    return folder_id
+
+
+def _upload_gdoc(service, doc, filename: str, folder_id: str) -> str:
+    """Upload a python-docx Document as a native Google Doc. Returns the Docs URL."""
+    import io
+    from googleapiclient.http import MediaIoBaseUpload
+
+    buf = io.BytesIO()
+    doc.save(buf)
+    buf.seek(0)
+
+    q = (
+        f"name = '{filename}' and '{folder_id}' in parents "
+        f"and mimeType = '{_GDOC_MIME}' and trashed = false"
+    )
+    existing = service.files().list(q=q, fields="files(id)", pageSize=1).execute()
+    media = MediaIoBaseUpload(buf, mimetype=_DOCX_MIME, resumable=True)
+
+    if existing.get("files"):
+        file_id = existing["files"][0]["id"]
+        service.files().update(fileId=file_id, media_body=media).execute()
+    else:
+        meta = {"name": filename, "mimeType": _GDOC_MIME, "parents": [folder_id]}
+        result = service.files().create(body=meta, media_body=media, fields="id").execute()
+        file_id = result["id"]
+
+    return f"https://docs.google.com/document/d/{file_id}/edit"
+
+
+# ---------------------------------------------------------------------------
 # Data fetching
 # ---------------------------------------------------------------------------
 
@@ -857,11 +952,20 @@ def main():
                         help="Cookie string")
     parser.add_argument("-f", "--cookies-file", metavar="FILE",
                         help="Read cookies from file")
-    parser.add_argument("--type", choices=["json", "txt", "docx"], default="json",
-                        help="Output format (default: json)")
+    parser.add_argument("--type", choices=["json", "txt", "docx", "gdoc"], default="json",
+                        help="Output format (default: json). gdoc uploads native Google Docs via Drive API.")
+    parser.add_argument("--credentials", default=None, metavar="FILE",
+                        help="Path to Google OAuth credentials.json (for --type gdoc)")
     parser.add_argument("--debug", action="store_true",
                         help="Print debug info to stderr")
     args = parser.parse_args()
+
+    if args.type == "gdoc" and args.output_dir == os.path.expanduser("~/Documents/homerun_output"):
+        args.output_dir = "Accounts_HR"
+
+    drive_service = None
+    if args.type == "gdoc":
+        drive_service = _get_drive_service(args.credentials)
 
     cookies = _get_cookies(args)
 
@@ -892,15 +996,24 @@ def main():
             if not args.run_all:
                 return
 
-        os.makedirs(args.output_dir, exist_ok=True)
-        print(f"Exporting {len(opps)} opportunities to {args.output_dir}/\n")
-
         ext = args.type
+        if ext != "gdoc":
+            os.makedirs(args.output_dir, exist_ok=True)
+        print(f"Exporting {len(opps)} opportunities to {args.output_dir}/\n")
 
         def _export_one(opp):
             data = fetch_evaluation_data(opp["uuid"], cookies, debug=args.debug)
             opp_json = build_opportunity_json(data)
             account = opp["name"].split(" - ", 1)[0].strip()
+
+            if ext == "gdoc":
+                doc = format_opportunity_docx(opp_json)
+                folder_path = f"{args.output_dir}/{_safe_filename(account)}"
+                folder_id = _resolve_drive_folder(drive_service, folder_path)
+                filename = _safe_filename(opp["name"])
+                url = _upload_gdoc(drive_service, doc, filename, folder_id)
+                return url, opp_json
+
             opp_dir = os.path.join(args.output_dir, _safe_filename(account))
             os.makedirs(opp_dir, exist_ok=True)
             path = os.path.join(opp_dir, f"{_safe_filename(opp['name'])}.{ext}")
@@ -911,13 +1024,21 @@ def main():
                 with open(path, "w", encoding="utf-8") as f:
                     if ext == "txt":
                         f.write(format_opportunity_text(opp_json))
+                    elif ext == "json":
+                        json.dump(
+                            build_output_envelope([opp_json]),
+                            f,
+                            indent=2,
+                            ensure_ascii=False,
+                        )
                     else:
-                        json.dump(build_output_envelope([opp_json]), f, indent=2, ensure_ascii=False)
+                        f.write(format_export_markdown([opp_json]))
             return path, opp_json
 
         exported, skipped = 0, 0
         all_opps = []
-        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
+        workers = 1 if ext == "gdoc" else 4
+        with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
             future_to_opp = {pool.submit(_export_one, opp): opp for opp in opps}
             for future in concurrent.futures.as_completed(future_to_opp):
                 opp = future_to_opp[future]
@@ -935,9 +1056,9 @@ def main():
                 except requests.RequestException as e:
                     print(f"  {opp['name']} FAILED: {e}", file=sys.stderr)
 
-        if all_opps:
+        if all_opps and ext != "gdoc":
             all_opps.sort(key=lambda o: o.get("Customer", ""))
-            combined_ext = "json" if ext == "docx" else ext
+            combined_ext = "json" if ext in ("docx", "gdoc") else ext
             all_path = os.path.join(args.output_dir, f"all.{combined_ext}")
             with open(all_path, "w", encoding="utf-8") as f:
                 if combined_ext == "txt":
@@ -957,7 +1078,15 @@ def main():
     data = fetch_evaluation_data(uuid, cookies, debug=args.debug)
     opp_json = build_opportunity_json(data)
 
-    if args.type == "docx":
+    if args.type == "gdoc":
+        doc = format_opportunity_docx(opp_json)
+        account = opp_json.get("Customer", "Unknown")
+        folder_path = f"{args.output_dir}/{_safe_filename(account)}"
+        folder_id = _resolve_drive_folder(drive_service, folder_path)
+        filename = _safe_filename(opp_json.get("Opportunity_Name", "output"))
+        url = _upload_gdoc(drive_service, doc, filename, folder_id)
+        print(f"Google Doc: {url}")
+    elif args.type == "docx":
         doc = format_opportunity_docx(opp_json)
         out_path = args.prompt_file or f"{_safe_filename(opp_json.get('Opportunity_Name', 'output'))}.docx"
         doc.save(out_path)
@@ -965,8 +1094,10 @@ def main():
     else:
         if args.type == "txt":
             output = format_opportunity_text(opp_json)
-        else:
+        elif args.type == "json":
             output = json.dumps(build_output_envelope([opp_json]), indent=2, ensure_ascii=False)
+        else:
+            output = format_export_markdown([opp_json])
 
         if args.prompt_file:
             with open(args.prompt_file, "w", encoding="utf-8") as f:
