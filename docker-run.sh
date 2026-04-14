@@ -57,10 +57,12 @@ if [ "$PY_MAJOR" -eq 3 ] && [ "$PY_MINOR" -gt 12 ]; then
 fi
 
 if ! "$PYTHON" -c "import rookiepy" &>/dev/null; then
-  echo "Error: rookiepy is not installed in '$PYTHON'." >&2
-  echo "  Fix: $PYTHON -m pip install rookiepy" >&2
-  echo "  Or create a venv:  python3.12 -m venv .venv && .venv/bin/pip install rookiepy" >&2
-  exit 1
+  echo "rookiepy not found — installing..." >&2
+  "$PYTHON" -m pip install rookiepy >&2 || {
+    echo "Error: failed to install rookiepy." >&2
+    echo "  Try manually: $PYTHON -m pip install rookiepy" >&2
+    exit 1
+  }
 fi
 
 # --- Extract cookies from Chrome ---
