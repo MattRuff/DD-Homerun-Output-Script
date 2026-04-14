@@ -122,4 +122,35 @@ for c in cookies:
 print('; '.join(f'{k}={v}' for k, v in seen.items()))
 ")
 
-docker run --rm -e HOMERUN_COOKIES="$COOKIES" "${IMAGE}:${TAG}" "$@"
+# --- Detect -o / --output-dir and mount it into the container ---
+
+DOCKER_ARGS=()
+SCRIPT_ARGS=()
+OUTPUT_DIR=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -o|--output-dir)
+      OUTPUT_DIR="$2"
+      shift 2
+      ;;
+    -o=*|--output-dir=*)
+      OUTPUT_DIR="${1#*=}"
+      shift
+      ;;
+    *)
+      SCRIPT_ARGS+=("$1")
+      shift
+      ;;
+  esac
+done
+
+if [ -z "$OUTPUT_DIR" ]; then
+  OUTPUT_DIR="$HOME/Documents/homerun_output"
+fi
+ABS_OUTPUT="$(cd "$(dirname "$OUTPUT_DIR")" 2>/dev/null && pwd)/$(basename "$OUTPUT_DIR")" || ABS_OUTPUT="$OUTPUT_DIR"
+mkdir -p "$ABS_OUTPUT"
+DOCKER_ARGS+=(-v "$ABS_OUTPUT:/output")
+SCRIPT_ARGS+=(-o /output)
+
+docker run --rm -e HOMERUN_COOKIES="$COOKIES" "${DOCKER_ARGS[@]}" "${IMAGE}:${TAG}" "${SCRIPT_ARGS[@]}"
