@@ -757,7 +757,8 @@ def main():
         def _export_one(opp):
             data = fetch_evaluation_data(opp["uuid"], cookies, debug=args.debug)
             opp_json = build_opportunity_json(data)
-            opp_dir = os.path.join(args.output_dir, _safe_filename(opp["name"]))
+            account = opp["name"].split(" - ", 1)[0].strip()
+            opp_dir = os.path.join(args.output_dir, _safe_filename(account))
             os.makedirs(opp_dir, exist_ok=True)
             path = os.path.join(opp_dir, f"{_safe_filename(opp['name'])}.{ext}")
             with open(path, "w", encoding="utf-8") as f:
