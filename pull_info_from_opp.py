@@ -604,6 +604,88 @@ def format_opportunity_text(opp: dict) -> str:
     return "\n".join(lines)
 
 
+def format_opportunity_docx(opp: dict) -> "docx.Document":
+    """Format a single opportunity as a Word (.docx) document."""
+    from docx import Document
+    from docx.shared import Pt, Inches
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+
+    doc = Document()
+
+    style = doc.styles["Normal"]
+    style.font.name = "Calibri"
+    style.font.size = Pt(11)
+
+    doc.add_heading(opp.get("Opportunity_Name", "Unknown"), level=1)
+
+    info_fields = [
+        ("Opportunity ID", opp.get("Opportunity_ID", "")),
+        ("Customer", opp.get("Customer", "")),
+    ]
+    if opp.get("Type"):
+        info_fields.append(("Type", opp["Type"]))
+    if opp.get("Term"):
+        info_fields.append(("Term", opp["Term"]))
+    if opp.get("Year"):
+        info_fields.append(("Year", opp["Year"]))
+    info_fields += [
+        ("Stage", opp.get("Stage", "")),
+        ("Deal Size", f"${opp.get('Deal_Size', 0):,.2f}"),
+        ("SE", opp.get("SE", "")),
+        ("SR", opp.get("SR", "")),
+        ("Created", opp.get("Created_Date", "")),
+        ("Last Updated", opp.get("Last_Updated", "")),
+        ("Sentiment", opp.get("Sentiment", "")),
+        ("Tech Win", opp.get("Tech_Win", "")),
+        ("Deal Win", opp.get("Deal_Win", "")),
+    ]
+
+    table = doc.add_table(rows=len(info_fields), cols=2, style="Light Grid Accent 1")
+    table.columns[0].width = Inches(1.8)
+    table.columns[1].width = Inches(4.2)
+    for i, (label, value) in enumerate(info_fields):
+        table.rows[i].cells[0].text = label
+        table.rows[i].cells[1].text = str(value)
+        for cell in table.rows[i].cells:
+            for p in cell.paragraphs:
+                p.style.font.size = Pt(10)
+
+    status_entries = opp.get("Current_Status", [])
+    if status_entries:
+        doc.add_heading("Current Status", level=2)
+        for s in status_entries:
+            p = doc.add_paragraph()
+            run = p.add_run(f"[{s.get('date', '')}] {s.get('author', '')}: ")
+            run.bold = True
+            p.add_run(s.get("note", ""))
+
+    minutes = opp.get("Meeting_Minutes", [])
+    if minutes:
+        doc.add_heading(f"Meeting Minutes ({len(minutes)})", level=2)
+        for m in minutes:
+            doc.add_heading(f"{m.get('date', '')} — {m.get('title', '')}", level=3)
+            summary = m.get("summary", "")
+            if summary:
+                for para in summary.split("\n"):
+                    para = para.strip()
+                    if para:
+                        doc.add_paragraph(para)
+
+    transcripts = opp.get("Transcripts", [])
+    if transcripts:
+        total_segs = sum(len(mt.get("segments", [])) for mt in transcripts)
+        doc.add_heading(f"Transcripts ({len(transcripts)} meetings, {total_segs} segments)", level=2)
+        for meeting in transcripts:
+            doc.add_heading(meeting.get("meeting", ""), level=3)
+            for seg in meeting.get("segments", []):
+                p = doc.add_paragraph()
+                run = p.add_run(f"{seg.get('speaker', '')}: ")
+                run.bold = True
+                p.add_run(seg.get("text", ""))
+
+    return doc
+
+
 def format_all_opportunities_text(opportunities: list[dict]) -> str:
     parts = [f"Total opportunities: {len(opportunities)}\n"]
     for opp in opportunities:
@@ -717,7 +799,7 @@ def main():
                         help="Cookie string")
     parser.add_argument("-f", "--cookies-file", metavar="FILE",
                         help="Read cookies from file")
-    parser.add_argument("--type", choices=["json", "txt"], default="json",
+    parser.add_argument("--type", choices=["json", "txt", "docx"], default="json",
                         help="Output format (default: json)")
     parser.add_argument("--debug", action="store_true",
                         help="Print debug info to stderr")
@@ -763,11 +845,15 @@ def main():
             opp_dir = os.path.join(args.output_dir, _safe_filename(account))
             os.makedirs(opp_dir, exist_ok=True)
             path = os.path.join(opp_dir, f"{_safe_filename(opp['name'])}.{ext}")
-            with open(path, "w", encoding="utf-8") as f:
-                if ext == "txt":
-                    f.write(format_opportunity_text(opp_json))
-                else:
-                    json.dump(build_output_envelope([opp_json]), f, indent=2, ensure_ascii=False)
+            if ext == "docx":
+                doc = format_opportunity_docx(opp_json)
+                doc.save(path)
+            else:
+                with open(path, "w", encoding="utf-8") as f:
+                    if ext == "txt":
+                        f.write(format_opportunity_text(opp_json))
+                    else:
+                        json.dump(build_output_envelope([opp_json]), f, indent=2, ensure_ascii=False)
             return path, opp_json
 
         exported, skipped = 0, 0
@@ -792,9 +878,10 @@ def main():
 
         if all_opps:
             all_opps.sort(key=lambda o: o.get("Customer", ""))
-            all_path = os.path.join(args.output_dir, f"all.{ext}")
+            combined_ext = "json" if ext == "docx" else ext
+            all_path = os.path.join(args.output_dir, f"all.{combined_ext}")
             with open(all_path, "w", encoding="utf-8") as f:
-                if ext == "txt":
+                if combined_ext == "txt":
                     f.write(format_all_opportunities_text(all_opps))
                 else:
                     json.dump(build_output_envelope(all_opps), f, indent=2, ensure_ascii=False)
@@ -811,17 +898,23 @@ def main():
     data = fetch_evaluation_data(uuid, cookies, debug=args.debug)
     opp_json = build_opportunity_json(data)
 
-    if args.type == "txt":
-        output = format_opportunity_text(opp_json)
+    if args.type == "docx":
+        doc = format_opportunity_docx(opp_json)
+        out_path = args.prompt_file or f"{_safe_filename(opp_json.get('Opportunity_Name', 'output'))}.docx"
+        doc.save(out_path)
+        print(f"Written to: {out_path}")
     else:
-        output = json.dumps(build_output_envelope([opp_json]), indent=2, ensure_ascii=False)
+        if args.type == "txt":
+            output = format_opportunity_text(opp_json)
+        else:
+            output = json.dumps(build_output_envelope([opp_json]), indent=2, ensure_ascii=False)
 
-    if args.prompt_file:
-        with open(args.prompt_file, "w", encoding="utf-8") as f:
-            f.write(output)
-        print(f"Written to: {args.prompt_file}")
-    else:
-        print(output)
+        if args.prompt_file:
+            with open(args.prompt_file, "w", encoding="utf-8") as f:
+                f.write(output)
+            print(f"Written to: {args.prompt_file}")
+        else:
+            print(output)
 
 
 if __name__ == "__main__":
