@@ -516,16 +516,20 @@ def build_opportunity_json(data: dict) -> dict:
     for t in data.get("transcripts", []):
         if not isinstance(t, dict):
             continue
+        segments = []
         for seg in t.get("segments", []):
             if not isinstance(seg, dict):
                 continue
-            entry = {
-                "meeting": t.get("meeting_name", ""),
+            segments.append({
                 "speaker": seg.get("metadata_speaker", ""),
                 "timestamp": seg.get("metadata_timestamp", ""),
                 "text": seg.get("text", ""),
-            }
-            transcripts_out.append(entry)
+            })
+        if segments:
+            transcripts_out.append({
+                "meeting": t.get("meeting_name", ""),
+                "segments": segments,
+            })
     opp["Transcripts"] = transcripts_out
 
     return opp
@@ -587,17 +591,15 @@ def format_opportunity_text(opp: dict) -> str:
 
     transcripts = opp.get("Transcripts", [])
     if transcripts:
-        lines.append(f"  --- Transcripts ({len(transcripts)} segments) ---")
-        current_meeting = None
-        for t in transcripts:
-            meeting = t.get("meeting", "")
-            if meeting != current_meeting:
-                lines.append(f"  [{meeting}]")
-                current_meeting = meeting
-            speaker = t.get("speaker", "")
-            text = t.get("text", "")
-            lines.append(f"    {speaker}: {text}")
-        lines.append("")
+        total_segs = sum(len(m.get("segments", [])) for m in transcripts)
+        lines.append(f"  --- Transcripts ({len(transcripts)} meetings, {total_segs} segments) ---")
+        for meeting in transcripts:
+            lines.append(f"  [{meeting.get('meeting', '')}]")
+            for seg in meeting.get("segments", []):
+                speaker = seg.get("speaker", "")
+                text = seg.get("text", "")
+                lines.append(f"    {speaker}: {text}")
+            lines.append("")
 
     return "\n".join(lines)
 

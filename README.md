@@ -165,7 +165,7 @@ Each exported opportunity contains:
 | `Sentiment`, `Tech_Win`, `Deal_Win` | Evaluation outcomes |
 | `Current_Status` | Parsed status entries with dates and authors |
 | `Meeting_Minutes` | Array of meeting notes (date, title, summary) |
-| `Transcripts` | Array of transcript segments (meeting, speaker, timestamp, text) |
+| `Transcripts` | Array of meetings, each with a `meeting` name and `segments` array (speaker, timestamp, text) |
 
 ## Customization
 
