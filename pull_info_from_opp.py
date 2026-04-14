@@ -224,9 +224,6 @@ def _post(cookies: str, path: str, payload: dict) -> dict:
 # Data fetching
 # ---------------------------------------------------------------------------
 
-# Salesforce stage filter values used by fetch_opportunities(stage_filter="active").
-# These are standard Homerun stage names; override via SALESFORCE_STAGES_1_5 if
-# your instance uses different values.
 SALESFORCE_STAGES_1_5 = [
     {"value_uuid": "StageName_1. Conducting Discovery", "display_value": "1. Conducting Discovery"},
     {"value_uuid": "StageName_2. Demonstrating & Champion Building", "display_value": "2. Demonstrating & Champion Building"},
@@ -235,12 +232,19 @@ SALESFORCE_STAGES_1_5 = [
     {"value_uuid": "StageName_5. Finalizing Paper Process", "display_value": "5. Finalizing Paper Process"},
 ]
 
-# Optional local cache of user display-name → UUID for --team lookups.
-# Avoids an API call when names are known. The script falls back to the
-# /user endpoint for any name not listed here. Populate with your own
-# team members or leave empty.
+NEXT_STEPS_ATTRS = {
+    "AE_CSM_Next_Step":           "f797a8ce-1a93-45e8-9892-18f1297b71d2",
+    "AE_CSM_Manager_Next_Steps":  "c9931436-73fb-4a8f-b614-2775615a0e3c",
+    "AE_CSM_Director_Next_Steps": "b6cca865-f3e0-421a-916b-711c201d3592",
+    "SE_Next_Steps":              "c9fc4119-c4ac-4b1b-b147-2c86826ec796",
+    "SE_Leader_Next_Steps":       "ea7b34a6-6d39-45f1-afcd-ac6e97fa039e",
+}
+ATTR_GROUP_OPP_DETAILS = "4b480ff8-ecb5-42e0-9915-24461989c6bb"
+ATTR_GROUP_SE_DETAILS  = "b8f4b05f-33a2-4c3b-8fd5-39ab395180a9"
+_NEXT_STEPS_UUID_TO_KEY = {v: k for k, v in NEXT_STEPS_ATTRS.items()}
+
+
 KNOWN_USERS: dict[str, dict] = {
-    # "jane doe": {"value_uuid": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx", "display_value": "Jane Doe"},
 }
 
 
@@ -276,7 +280,6 @@ def fetch_opportunities(cookies: str, user_values: list[dict] | None = None,
                         stage_filter: str = "undecided") -> list[dict]:
     """
     Fetch opportunities filtered by tech leads and stage.
-
     user_values: list of {"value_uuid": ..., "display_value": ...} for Tech Lead filter.
                  If None, uses the authenticated user.
     stage_filter: "undecided" (Deal Win = Undecided) or "active" (stages 1-5).
@@ -328,11 +331,11 @@ def fetch_opportunities(cookies: str, user_values: list[dict] | None = None,
         "chart_type": "Table",
         "collaborator_comparator": "or",
         "data_fields": [
-            {"field_uuid": "2", "field_type": "value"},    # Opportunity Name
-            {"field_uuid": "13", "field_type": "number"},   # Deal Size
-            {"field_uuid": "4", "field_type": "value"},     # Homerun Stage
-            {"field_uuid": "22", "field_type": "value"},    # Opportunity UUID
-            {"field_uuid": "0", "field_type": "value"},     # Technical Lead
+            {"field_uuid": "2", "field_type": "value"},   # Opportunity Name
+            {"field_uuid": "13", "field_type": "number"},  # Deal Size
+            {"field_uuid": "4", "field_type": "value"},    # Homerun Stage
+            {"field_uuid": "22", "field_type": "value"},   # Opportunity UUID
+            {"field_uuid": "0", "field_type": "value"},    # Technical Lead
         ],
         "data_filters": data_filters,
         "order_by": "13",
@@ -376,15 +379,21 @@ def _fetch_single_transcript(cookies: str, uuid: str, item: dict, idx: int,
 
 
 def fetch_evaluation_data(uuid: str, cookies: str, debug: bool = False) -> dict:
-    """Fetch general info, meeting minutes, and transcripts for one evaluation."""
-    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
+    """Fetch general info, meeting minutes, transcripts, and attribute values for one evaluation."""
+    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as pool:
         f_info = pool.submit(_get, cookies, f"evaluation/{uuid}")
         f_minutes = pool.submit(_get, cookies, f"evaluation/{uuid}/meetingminutes")
         f_tlist = pool.submit(_get, cookies, f"evaluation/{uuid}/transcripts")
+        f_opp_attrs = pool.submit(_get, cookies, f"evaluation/{uuid}/group/{ATTR_GROUP_OPP_DETAILS}/attributevalues")
+        f_se_attrs = pool.submit(_get, cookies, f"evaluation/{uuid}/group/{ATTR_GROUP_SE_DETAILS}/attributevalues")
+
+    opp_attrs = f_opp_attrs.result() if isinstance(f_opp_attrs.result(), list) else []
+    se_attrs = f_se_attrs.result() if isinstance(f_se_attrs.result(), list) else []
 
     results = {
         "general_info": f_info.result(),
         "meeting_minutes": f_minutes.result(),
+        "attribute_values": opp_attrs + se_attrs,
     }
 
     transcripts_list = f_tlist.result()
@@ -432,7 +441,7 @@ def _strip_html(html: str) -> str:
 
 
 _STATUS_RE = re.compile(
-    r"(?:^|\n)\s*([A-Z]{2,4})\s+(\d{1,2}/\d{1,2}/\d{2,4})\s*[-\u2013\u2014]\s*(.*?)(?=\n\s*[A-Z]{2,4}\s+\d{1,2}/|\Z)",
+    r"(?:^|\n)\s*([A-Z]{2,4})\s+(\d{1,2}/\d{1,2}/\d{2,4})\s*[-–—]\s*(.*?)(?=\n\s*[A-Z]{2,4}\s+\d{1,2}/|\Z)",
     re.DOTALL,
 )
 
@@ -450,6 +459,7 @@ def _parse_current_status(text: str) -> list[dict]:
             date_str = raw_date
         entries.append({"date": date_str, "author": author, "note": note})
     return entries
+
 
 
 def _parse_opp_name(full_name: str) -> dict:
@@ -532,6 +542,16 @@ def build_opportunity_json(data: dict) -> dict:
             })
     opp["Transcripts"] = transcripts_out
 
+    attr_by_uuid = {
+        a["attr_value_uuid"]: a.get("attr_value_value", "")
+        for a in data.get("attribute_values", [])
+        if isinstance(a, dict)
+    }
+    opp["Next_Steps"] = {
+        key: attr_by_uuid.get(uuid, "")
+        for key, uuid in NEXT_STEPS_ATTRS.items()
+    }
+
     return opp
 
 
@@ -571,9 +591,29 @@ def format_opportunity_text(opp: dict) -> str:
     status_entries = opp.get("Current_Status", [])
     if status_entries:
         lines.append("")
-        lines.append("  --- Current Status ---")
+        lines.append(f"  --- Current Status ---")
         for s in status_entries:
             lines.append(f"  [{s.get('date', '')}] {s.get('author', '')}: {s.get('note', '')}")
+
+    next_steps = opp.get("Next_Steps", {})
+    _NS_LABELS = {
+        "AE_CSM_Next_Step":           "AE / CSM Next Step",
+        "AE_CSM_Manager_Next_Steps":  "AE / CSM Manager Next Steps",
+        "AE_CSM_Director_Next_Steps": "AE / CSM Director's Next Steps",
+        "SE_Next_Steps":              "SE Next Steps",
+        "SE_Leader_Next_Steps":       "SE Leader Next Steps",
+    }
+    ns_items = [(lbl, next_steps.get(key, "")) for key, lbl in _NS_LABELS.items()]
+    if any(v for _, v in ns_items):
+        lines.append("")
+        lines.append(f"  --- Next Steps ---")
+        for label, value in ns_items:
+            if value:
+                lines.append(f"  {label}:")
+                for ln in value.split("\n"):
+                    ln = ln.strip()
+                    if ln:
+                        lines.append(f"    {ln}")
 
     minutes = opp.get("Meeting_Minutes", [])
     if minutes:
@@ -659,6 +699,24 @@ def format_opportunity_docx(opp: dict) -> "docx.Document":
             run.bold = True
             p.add_run(s.get("note", ""))
 
+    next_steps = opp.get("Next_Steps", {})
+    _NS_LABELS = {
+        "AE_CSM_Next_Step":           "AE / CSM Next Step",
+        "AE_CSM_Manager_Next_Steps":  "AE / CSM Manager Next Steps",
+        "AE_CSM_Director_Next_Steps": "AE / CSM Director's Next Steps",
+        "SE_Next_Steps":              "SE Next Steps",
+        "SE_Leader_Next_Steps":       "SE Leader Next Steps",
+    }
+    ns_items = [(lbl, next_steps.get(key, "")) for key, lbl in _NS_LABELS.items()]
+    if any(v for _, v in ns_items):
+        doc.add_heading("Next Steps", level=2)
+        for label, value in ns_items:
+            if value:
+                p = doc.add_paragraph()
+                run = p.add_run(f"{label}: ")
+                run.bold = True
+                p.add_run(value)
+
     minutes = opp.get("Meeting_Minutes", [])
     if minutes:
         doc.add_heading(f"Meeting Minutes ({len(minutes)})", level=2)
@@ -741,7 +799,7 @@ def _search_all_opps(cookies: str) -> list[dict]:
 
 
 def _resolve_opp_identifier(cookies: str, identifier: str) -> str:
-    """Return evaluation UUID. Accepts a UUID or an opportunity name (exact or partial match)."""
+    """Return evaluation UUID. If identifier looks like a UUID, return it; else look up by opportunity name."""
     if _UUID_RE.match(identifier.strip()):
         return identifier.strip()
 
@@ -760,7 +818,7 @@ def _resolve_opp_identifier(cookies: str, identifier: str) -> str:
         pass
 
     # Fallback: search ALL opps across all tech leads
-    print("Not found in your opps, searching all opportunities...", file=sys.stderr)
+    print(f"Not found in your opps, searching all opportunities...", file=sys.stderr)
     all_opps = _search_all_opps(cookies)
     for opp in all_opps:
         if opp.get("name", "").strip().lower() == name_lower:
@@ -781,20 +839,20 @@ def _resolve_opp_identifier(cookies: str, identifier: str) -> str:
 
 def main():
     parser = argparse.ArgumentParser(description="Homerun Presales data exporter")
-    parser.add_argument("evaluation_uuid", nargs="?",
-                        help="Evaluation UUID or opportunity name")
+    parser.add_argument("evaluation_uuid", nargs="?", help="Evaluation UUID")
     parser.add_argument("--list", action="store_true", dest="list_opps",
                         help="List active opportunities")
     parser.add_argument("--all", action="store_true", dest="run_all", default=True,
                         help="Export all active opportunities (default)")
     parser.add_argument("--team", nargs="+", metavar="NAME",
-                        help="Filter by multiple tech leads")
-    parser.add_argument("-o", "--output-dir", default="output",
-                        help="Output directory (default: output/)")
+                        help="Filter by multiple tech leads (e.g. --team 'Austin Chin' 'Rickin Dialle')")
+    parser.add_argument("-o", "--output-dir",
+                        default=os.path.expanduser("~/Documents/homerun_output"),
+                        help="Output directory (default: ~/Documents/homerun_output/)")
     parser.add_argument("-P", "--prompt-file", metavar="FILE",
-                        help="Write output to FILE (single-opp mode)")
+                        help="Write prompt to this file (single UUID mode)")
     parser.add_argument("-p", "--prompt", action="store_true",
-                        help="Print output to stdout (single-opp mode)")
+                        help="Print prompt to stdout (single UUID mode)")
     parser.add_argument("-c", "--cookies", default=None,
                         help="Cookie string")
     parser.add_argument("-f", "--cookies-file", metavar="FILE",
@@ -807,6 +865,7 @@ def main():
 
     cookies = _get_cookies(args)
 
+    # Single UUID mode takes priority
     if args.evaluation_uuid:
         args.run_all = False
 
@@ -890,7 +949,7 @@ def main():
         print(f"\nDone. {exported} exported, {skipped} skipped (no access).")
         return
 
-    # Single-opp mode (argument can be evaluation UUID or opportunity name)
+    # Single UUID mode (argument can be evaluation UUID or opportunity name)
     if not args.evaluation_uuid:
         parser.error("evaluation_uuid or opportunity name required (or use --list / --all)")
 
