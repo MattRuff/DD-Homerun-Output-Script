@@ -76,6 +76,133 @@ def _check_jwt_expiry(cookie_str: str, source: str) -> None:
             break
 
 
+def _chrome_cookies_all_profiles(domains: list[str]) -> list[dict]:
+    """
+    Read Chrome cookies across all profiles on macOS.
+
+    rookiepy.chrome() only reads the Default profile. Homerun is often used in
+    a work Chrome profile (e.g. 'Profile 1'), so we scan every profile directory
+    and merge results, deduplicating by cookie name.
+    """
+    if sys.platform != "darwin":
+        # Non-macOS: fall back to rookiepy default behaviour
+        import rookiepy
+        return rookiepy.chrome(domains)
+
+    import glob as _glob
+    import shutil
+    import sqlite3
+    import subprocess
+    import tempfile
+
+    chrome_dir = os.path.expanduser("~/Library/Application Support/Google/Chrome")
+    if not os.path.isdir(chrome_dir):
+        import rookiepy
+        return rookiepy.chrome(domains)
+
+    # Get the AES key from macOS Keychain (same key used by all Chrome profiles)
+    try:
+        key_raw = subprocess.check_output(
+            ["security", "find-generic-password", "-w",
+             "-s", "Chrome Safe Storage", "-a", "Chrome"],
+            stderr=subprocess.DEVNULL,
+        ).strip()
+    except subprocess.CalledProcessError:
+        # Keychain not accessible — fall back to rookiepy (will only get Default)
+        import rookiepy
+        return rookiepy.chrome(domains)
+
+    try:
+        from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+        from cryptography.hazmat.primitives import hashes
+        from cryptography.hazmat.backends import default_backend
+        from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+    except ImportError:
+        # cryptography not installed — fall back to rookiepy
+        import rookiepy
+        return rookiepy.chrome(domains)
+
+    kdf = PBKDF2HMAC(
+        algorithm=hashes.SHA1(),
+        length=16,
+        salt=b"saltysalt",
+        iterations=1003,
+        backend=default_backend(),
+    )
+    aes_key = kdf.derive(key_raw)
+
+    def _decrypt_value(encrypted: bytes) -> str:
+        if not encrypted:
+            return ""
+        # Chrome v10 format: b'v10' + 16-byte IV + AES-CBC ciphertext
+        # After decryption the first 16 bytes are a random prefix that must be stripped.
+        if encrypted[:3] == b"v10":
+            iv = encrypted[3:19]
+            ciphertext = encrypted[19:]
+            if len(ciphertext) % 16 != 0:
+                return ""
+            cipher = Cipher(algorithms.AES(aes_key), modes.CBC(iv), backend=default_backend())
+            dec = cipher.decryptor()
+            decrypted = dec.update(ciphertext) + dec.finalize()
+            # Remove PKCS7 padding
+            pad = decrypted[-1]
+            if 1 <= pad <= 16:
+                decrypted = decrypted[:-pad]
+            # Strip the 16-byte random prefix Chrome prepends before encrypting
+            decrypted = decrypted[16:]
+            try:
+                return decrypted.decode("utf-8")
+            except UnicodeDecodeError:
+                return decrypted.decode("latin-1")
+        # Unencrypted (older Chrome or already plaintext)
+        try:
+            return encrypted.decode("utf-8")
+        except UnicodeDecodeError:
+            return ""
+
+    domain_suffixes = tuple(d.lstrip(".") for d in domains) if domains else None
+
+    all_cookies: dict[str, dict] = {}  # name -> cookie dict, last profile wins
+
+    for cookies_db in sorted(_glob.glob(os.path.join(chrome_dir, "*/Cookies"))):
+        # Copy to a temp file so we don't lock Chrome's live database
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
+            tmp_path = tmp.name
+        try:
+            shutil.copy2(cookies_db, tmp_path)
+            conn = sqlite3.connect(tmp_path)
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT host_key, name, encrypted_value, path, is_secure, "
+                "expires_utc, is_httponly FROM cookies"
+            ).fetchall()
+            conn.close()
+        except Exception:
+            continue
+        finally:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+
+        for row in rows:
+            host = row["host_key"]
+            if domain_suffixes and not any(host.endswith(s) for s in domain_suffixes):
+                continue
+            value = _decrypt_value(bytes(row["encrypted_value"]))
+            all_cookies[row["name"]] = {
+                "name": row["name"],
+                "value": value,
+                "domain": host,
+                "path": row["path"],
+                "secure": bool(row["is_secure"]),
+                "expires": row["expires_utc"],
+                "http_only": bool(row["is_httponly"]),
+            }
+
+    return list(all_cookies.values())
+
+
 def _get_cookies(args) -> str:
     """Resolve cookies: explicit arg > file > env > Chrome cookie store."""
     if args.cookies:
@@ -92,7 +219,7 @@ def _get_cookies(args) -> str:
         return cookie_str
 
     try:
-        import rookiepy
+        cookies = _chrome_cookies_all_profiles(["homerunpresales.com"])
     except ImportError:
         print(
             "Error: no cookies provided and rookiepy is not installed.\n"
@@ -101,9 +228,6 @@ def _get_cookies(args) -> str:
             file=sys.stderr,
         )
         sys.exit(1)
-
-    try:
-        cookies = rookiepy.chrome(["homerunpresales.com"])
     except RuntimeError as e:
         err = str(e).lower()
         if "can't find cookies" in err or "no such file" in err:
@@ -127,7 +251,7 @@ def _get_cookies(args) -> str:
                 )
         else:
             print(
-                f"Error: rookiepy could not read Chrome cookies: {e}\n"
+                f"Error: could not read Chrome cookies: {e}\n"
                 "  On macOS, check:\n"
                 "    1. Full Disk Access granted to your terminal app\n"
                 "    2. Keychain prompt: click 'Always Allow' for 'Chrome Safe Storage'\n"

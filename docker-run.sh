@@ -65,46 +65,96 @@ if ! "$PYTHON" -c "import rookiepy" &>/dev/null; then
   }
 fi
 
-# --- Extract cookies from Chrome ---
+# --- Extract cookies from Chrome (all profiles) ---
 
 COOKIES=$("$PYTHON" -c "
-import sys
-try:
-    import rookiepy
-except ImportError:
-    print('Error: rookiepy not importable even after install attempt.', file=sys.stderr)
-    sys.exit(1)
-try:
-    cookies = rookiepy.chrome(['homerunpresales.com'])
-except RuntimeError as e:
-    err = str(e).lower()
-    if 'can\'t find cookies' in err or 'no such file' in err:
+import sys, os, glob, shutil, sqlite3, subprocess, tempfile
+
+def _get_cookies():
+    # Use the same multi-profile extraction as the main script.
+    # Reads from all Chrome profiles via macOS Keychain + SQLite.
+    if sys.platform != 'darwin':
+        try:
+            import rookiepy
+            return rookiepy.chrome(['homerunpresales.com'])
+        except Exception as e:
+            print(f'Error: could not read Chrome cookies: {e}', file=sys.stderr)
+            sys.exit(1)
+
+    chrome_dir = os.path.expanduser('~/Library/Application Support/Google/Chrome')
+    if not os.path.isdir(chrome_dir):
+        print('Error: Chrome not found at default path.', file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        key_raw = subprocess.check_output(
+            ['security', 'find-generic-password', '-w', '-s', 'Chrome Safe Storage', '-a', 'Chrome'],
+            stderr=subprocess.DEVNULL,
+        ).strip()
+    except subprocess.CalledProcessError:
         print(
-            'Error: could not read Chrome cookie database.\n'
-            '  On macOS this usually means your terminal app lacks Full Disk Access.\n'
-            '  Fix: System Settings > Privacy & Security > Full Disk Access\n'
-            '        -> toggle ON your terminal (Terminal, iTerm2, Cursor, VS Code, etc.)\n'
-            '        -> restart the terminal and try again.',
+            'Error: could not read Chrome Safe Storage key from Keychain.\n'
+            '  Keychain prompt: click \"Always Allow\" for \"Chrome Safe Storage\".',
             file=sys.stderr,
         )
-    else:
-        print(
-            f'Error: rookiepy could not read Chrome cookies: {e}\n'
-            '  On macOS, check:\n'
-            '    1. Full Disk Access granted to your terminal app\n'
-            '    2. Keychain prompt: click \"Always Allow\" for \"Chrome Safe Storage\"',
-            file=sys.stderr,
-        )
-    sys.exit(1)
-except OSError as e:
-    print(
-        f'Error: OS permission error reading Chrome cookies: {e}\n'
-        '  On macOS: grant Full Disk Access to your terminal app:\n'
-        '    System Settings > Privacy & Security > Full Disk Access\n'
-        '  Then restart the terminal and try again.',
-        file=sys.stderr,
-    )
-    sys.exit(1)
+        sys.exit(1)
+
+    try:
+        from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+        from cryptography.hazmat.primitives import hashes
+        from cryptography.hazmat.backends import default_backend
+        from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+    except ImportError:
+        print('Error: cryptography package not installed. Run: pip install cryptography', file=sys.stderr)
+        sys.exit(1)
+
+    from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.backends import default_backend
+    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+
+    kdf = PBKDF2HMAC(algorithm=hashes.SHA1(), length=16, salt=b'saltysalt', iterations=1003, backend=default_backend())
+    aes_key = kdf.derive(key_raw)
+
+    def _decrypt(enc):
+        if not enc or enc[:3] != b'v10':
+            return ''
+        iv, ct = enc[3:19], enc[19:]
+        if len(ct) % 16 != 0:
+            return ''
+        cipher = Cipher(algorithms.AES(aes_key), modes.CBC(iv), backend=default_backend())
+        dec = cipher.decryptor()
+        pt = dec.update(ct) + dec.finalize()
+        pad = pt[-1]
+        pt = pt[:-pad][16:]  # strip PKCS7 padding and 16-byte random prefix
+        try:
+            return pt.decode('utf-8')
+        except UnicodeDecodeError:
+            return pt.decode('latin-1')
+
+    all_cookies = {}
+    for db_path in sorted(glob.glob(os.path.join(chrome_dir, '*/Cookies'))):
+        with tempfile.NamedTemporaryFile(suffix='.db', delete=False) as tmp:
+            tmp_path = tmp.name
+        try:
+            shutil.copy2(db_path, tmp_path)
+            conn = sqlite3.connect(tmp_path)
+            rows = conn.execute(
+                \"SELECT name, encrypted_value, host_key FROM cookies WHERE host_key LIKE '%homerun%'\"
+            ).fetchall()
+            conn.close()
+        except Exception:
+            continue
+        finally:
+            try: os.unlink(tmp_path)
+            except OSError: pass
+        for name, enc_val, host in rows:
+            value = _decrypt(bytes(enc_val))
+            all_cookies[name] = {'name': name, 'value': value, 'domain': host}
+
+    return list(all_cookies.values())
+
+cookies = _get_cookies()
 if not cookies:
     print('Error: no Homerun cookies found in Chrome. Log in to Homerun first.', file=sys.stderr)
     sys.exit(1)

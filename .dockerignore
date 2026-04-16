@@ -1,9 +1,45 @@
+# The Dockerfile only needs pull_info_from_opp.py and requirements.txt.
+# Exclude everything else to keep the build context minimal.
+
+# Git
 .git
 .gitignore
-.venv
-__pycache__
-*.pyc
-output
-.DS_Store
+
+# Docs / meta
 *.md
 LICENSE
+CHANGELOG.md
+
+# Shell wrappers (host-side only, not used inside the container)
+docker-run.sh
+docker-push.sh
+
+# Python artifacts
+__pycache__
+*.py[cod]
+*.pyo
+
+# Virtual environments
+venv/
+.venv/
+.venv*/
+env/
+
+# Auth / secrets
+cookies.txt
+token.json
+credentials.json
+
+# Generated output
+output/
+homerun_output/
+
+# macOS
+.DS_Store
+
+# Claude Code
+.claude/
+
+# Editor / IDE
+.idea/
+.vscode/

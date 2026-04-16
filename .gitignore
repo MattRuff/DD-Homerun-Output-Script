@@ -1,8 +1,38 @@
-cookies.txt
-output/
-*.pyc
+# Python
 __pycache__/
+*.py[cod]
+*.pyo
+
+# Virtual environments
+venv/
 .venv/
 .venv*/
+env/
+.env/
+
+# Auth / secrets — never commit these
+cookies.txt
 token.json
 credentials.json
+
+# Google OAuth token written at runtime
+token.json
+
+# Generated output
+output/
+homerun_output/
+*.output/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Claude Code
+.claude/
+
+# Editor / IDE
+.idea/
+.vscode/
+*.swp
+*.swo
