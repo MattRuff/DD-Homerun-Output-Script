@@ -34,7 +34,7 @@ services:
       - ${HOME}/.homerun:/state
       # Drive-synced Markdown output destination. Override by exporting
       # HOMERUN_OUTPUT_HOST_DIR before `docker compose run`.
-      - "${HOMERUN_OUTPUT_HOST_DIR:-${HOME}/Google Drive/My Drive/Accounts_HR}:/output"
+      - "${HOMERUN_OUTPUT_HOST_DIR:-${HOME}/Google Drive/My Drive/SE Brain/homerun-output}:/output"
     # No interactive TTY by default; the container is a one-shot.
     tty: false
     stdin_open: false

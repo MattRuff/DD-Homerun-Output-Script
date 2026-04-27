@@ -5,7 +5,7 @@
 #   1. Source ~/.homerun/env if present (Slack token, refresh path overrides).
 #   2. Run `docker compose run --rm exporter scheduled` so the entire export
 #      executes inside the homerun-exporter:local container with
-#      ~/.homerun and ~/Google Drive/My Drive/Accounts_HR mounted in.
+#      ~/.homerun and ~/Google Drive/My Drive/SE Brain/homerun-output mounted in.
 #
 # Fallback flow (when Docker is unavailable):
 #   - Run `python -m auth fetch` + `pull_info_from_opp.py --all` directly on
@@ -35,7 +35,7 @@ if [ -f "$HOME/.homerun/env" ]; then
   set +a
 fi
 
-OUTPUT_DIR="${HOMERUN_OUTPUT_DIR:-$HOME/Google Drive/My Drive/Accounts_HR}"
+OUTPUT_DIR="${HOMERUN_OUTPUT_DIR:-$HOME/Google Drive/My Drive/SE Brain/homerun-output}"
 LOG="${HOMERUN_LOG:-$WORKSPACE_DIR/output/export.log}"
 PRIORITY="${HOMERUN_AUTH_PRIORITY:-refresh_token,playwright,applescript,rookiepy}"
 MIN_TTL="${HOMERUN_MIN_TTL:-600}"

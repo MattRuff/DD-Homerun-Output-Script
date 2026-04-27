@@ -40,7 +40,7 @@ returns a cookie string with a fresh JWT.
 | `scripts/run_export.sh` | Cron/launchd wrapper: docker compose run (preferred) or host fallback |
 | `scripts/entrypoint.sh` | Container entrypoint dispatcher (legacy / scheduled / auth modes) |
 | `Dockerfile` | Image definition: python 3.12-slim + tini + auth harness + exporter |
-| `docker-compose.yml` | One-line launcher with `~/.homerun` and `~/Google Drive/My Drive/Accounts_HR` mounted |
+| `docker-compose.yml` | One-line launcher with `~/.homerun` and `~/Google Drive/My Drive/SE Brain/homerun-output` mounted |
 | `com.homerun.export.daily.plist` | macOS launchd schedule (09:30 daily) |
 
 ## Strategies
@@ -102,7 +102,7 @@ launchd ──► run_export.sh ─┬─► docker compose run --rm exporter sc
                            │       ├─► auth fetch (refresh_token, /api/v1/jwt/refresh)
                            │       ├─► persists cookies.txt back to /state (~/.homerun on host)
                            │       └─► pull_info_from_opp.py --all -o /output --type md
-                           │             /output -> ~/Google Drive/My Drive/Accounts_HR (Drive)
+                           │             /output -> ~/Google Drive/My Drive/SE Brain/homerun-output (Drive)
                            └─► host fallback if docker isn't available
 ```
 
@@ -111,7 +111,7 @@ Volume mounts wired in `docker-compose.yml`:
 | Container path | Host path | Purpose |
 | --- | --- | --- |
 | `/state` | `~/.homerun` | Read/write `cookies.txt` (mode 0600) |
-| `/output` | `~/Google Drive/My Drive/Accounts_HR` | Markdown export destination (Drive-synced). Override with `HOMERUN_OUTPUT_HOST_DIR`. |
+| `/output` | `~/Google Drive/My Drive/SE Brain/homerun-output` | Markdown export destination (Drive-synced). Override with `HOMERUN_OUTPUT_HOST_DIR`. |
 
 Container env knobs (overridable via shell or `.env`):
 
