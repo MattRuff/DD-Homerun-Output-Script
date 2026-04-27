@@ -2,6 +2,8 @@
 
 Export evaluation data (general info, meeting minutes, call transcripts) from the [Homerun Presales](https://www.homerunpresales.com/) API as Markdown, JSON, plain text, Word, or Google Docs — ready for LLM post-processing, CRM enrichment, or reporting.
 
+> **Looking for unattended automation?** See [`AUTOMATION.md`](./AUTOMATION.md) for the scheduled `docker compose` + `launchd` setup that refreshes JWTs automatically and exports daily into Drive without human interaction.
+
 ## Getting Started
 
 Clone the repo first:

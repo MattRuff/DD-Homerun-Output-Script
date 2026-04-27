@@ -1,0 +1,40 @@
+# One-shot service for the unattended Homerun export.
+#
+#   docker compose run --rm exporter scheduled        # full unattended run
+#   docker compose run --rm exporter --list           # legacy: list opps
+#   docker compose run --rm exporter auth benchmark   # diagnose strategies
+#
+# State (cookies.txt) persists in ~/.homerun on the host so a second run can
+# refresh the JWT without rookiepy. Output Markdown lands in the Drive-synced
+# folder. The image is rebuilt locally so we always run the in-tree auth
+# harness — no need to push to Docker Hub for development.
+services:
+  exporter:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: homerun-exporter:local
+    # Restart policy is irrelevant for `run --rm`, but useful if you ever flip
+    # this to a long-lived service.
+    restart: "no"
+    environment:
+      HOMERUN_STATE_DIR: /state
+      HOMERUN_OUTPUT_DIR: /output
+      HOMERUN_AUTH_PRIORITY: refresh_token
+      HOMERUN_MIN_TTL: "600"
+      HOMERUN_EXPORT_TYPE: md
+      HOMERUN_EXPORT_ARGS: "--all"
+      # Override the API host without rebuilding the image.
+      HOMERUN_BASE_URL: "${HOMERUN_BASE_URL:-https://datadog.cloud.homerunpresales.com/api/v1}"
+      # Optional Slack alert on failure (sourced from .env or shell).
+      SLACK_BOT_TOKEN: "${SLACK_BOT_TOKEN:-}"
+      SLACK_CHANNEL_ID: "${SLACK_CHANNEL_ID:-}"
+    volumes:
+      # Persisted cookies — the strategy reads/writes cookies.txt here.
+      - ${HOME}/.homerun:/state
+      # Drive-synced Markdown output destination. Override by exporting
+      # HOMERUN_OUTPUT_HOST_DIR before `docker compose run`.
+      - "${HOMERUN_OUTPUT_HOST_DIR:-${HOME}/Google Drive/My Drive/Accounts_HR}:/output"
+    # No interactive TTY by default; the container is a one-shot.
+    tty: false
+    stdin_open: false

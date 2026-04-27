@@ -1,4 +1,5 @@
-# The Dockerfile only needs pull_info_from_opp.py and requirements.txt.
+# The Dockerfile only needs pull_info_from_opp.py, requirements.txt,
+# the auth/ package, and scripts/entrypoint.sh.
 # Exclude everything else to keep the build context minimal.
 
 # Git
@@ -10,9 +11,14 @@
 LICENSE
 CHANGELOG.md
 
-# Shell wrappers (host-side only, not used inside the container)
+# Shell wrappers / compose (host-side only, not used inside the container)
 docker-run.sh
 docker-push.sh
+docker-compose.yml
+
+# Host-only helpers (not used inside the container)
+scripts/test_auth_methods.py
+scripts/run_export.sh
 
 # Python artifacts
 __pycache__
@@ -25,10 +31,11 @@ venv/
 .venv*/
 env/
 
-# Auth / secrets
+# Auth / secrets — never bake into the image
 cookies.txt
 token.json
 credentials.json
+.homerun/
 
 # Generated output
 output/
